@@ -188,6 +188,7 @@ import qualified Data.HashMap.Lazy as LazyHashMap
 import Control.Exception
 import Data.Traversable
 
+import Control.Monad
 import Data.Bits
 import Data.Word
 import Data.Int
@@ -195,7 +196,6 @@ import Data.Ratio
 import Data.List
 import qualified Text.ParserCombinators.ReadP as ReadP
 import Data.Char
-import Control.Monad
 
 #if !MIN_VERSION_base(4,6,0)
 import Prelude hiding (catch)
@@ -317,10 +317,18 @@ class Unjson a where
   -- 'UnjsonDef'.
   unjsonDef :: UnjsonDef a
 
+#if __GLASGOW_HASKELL__ < 710
+instance (Unjson a) => Unjson [a] where
+#else
 instance {-# OVERLAPPABLE #-} (Unjson a) => Unjson [a] where
+#endif
   unjsonDef = arrayOf unjsonDef
 
+#if __GLASGOW_HASKELL__ < 710
+instance Unjson String where
+#else
 instance {-# INCOHERENT #-} Unjson String where
+#endif
   unjsonDef = unjsonAesonWithDoc "String"
 
 instance Unjson Bool             where unjsonDef = unjsonAeson
@@ -871,7 +879,7 @@ parseUpdating (ArrayUnjsonDef _ m g k f) ov v
             [0..]
   where
     zipExtend [] Nothing = []
-    zipExtend v  ov      = zipExtend' v (sequence $ fmap k ov)
+    zipExtend v  ov      = zipExtend' v (Data.Traversable.sequence $ fmap k ov)
 
     zipExtend' vs ovs =
       let l_vs  = length vs
