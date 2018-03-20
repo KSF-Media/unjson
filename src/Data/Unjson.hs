@@ -98,7 +98,7 @@ module Data.Unjson
 , unjsonToByteStringBuilder'
 , unjsonToByteStringBuilder''
 , Options(..)
-
+, defaultOptions
 -- * Data definitions
 , Unjson(..)
 , UnjsonDef(..)
@@ -673,6 +673,10 @@ data Options = Options
   }
   deriving (Eq, Ord, Show)
 
+defaultOptions :: Options
+defaultOptions =
+  Options { pretty = False, indent = 4, nulls = False }
+
 -- | Given a definition of a value and a value produce a
 -- 'Aeson.Value'.
 --
@@ -682,7 +686,7 @@ data Options = Options
 -- > let json = unjsonToJSON unjsonThing v
 --
 unjsonToJSON :: UnjsonDef a -> a -> Aeson.Value
-unjsonToJSON = unjsonToJSON' (Options { pretty = False, indent = 4, nulls = False })
+unjsonToJSON = unjsonToJSON' defaultOptions
 
 -- | Given a definition of a value and a value produce a
 -- 'Aeson.Value'. Takes 'Options'.
