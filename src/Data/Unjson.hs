@@ -670,12 +670,13 @@ data Options = Options
   { pretty :: Bool -- ^ Pretty format. Use spaces and newlines.
   , indent :: Int  -- ^ Amount of spaces for indent. 4 looks good.
   , nulls  :: Bool -- ^ Output explicit nulls for absent optional fields.
+  , plainEnums :: Bool -- ^ Encode enums as plain values.
   }
   deriving (Eq, Ord, Show)
 
 defaultOptions :: Options
 defaultOptions =
-  Options { pretty = False, indent = 4, nulls = False }
+  Options { pretty = False, indent = 4, nulls = False, plainEnums = False }
 
 -- | Given a definition of a value and a value produce a
 -- 'Aeson.Value'.
@@ -706,10 +707,14 @@ unjsonToJSON' opt (ObjectUnjsonDef f) a =
   Aeson.object (objectDefToArray (nulls opt) (unjsonToJSON' opt) a f)
 unjsonToJSON' opt (TupleUnjsonDef f) a =
   Aeson.toJSON (tupleDefToArray (unjsonToJSON' opt) a f)
-unjsonToJSON' opt (DisjointUnjsonDef k l) a =
+unjsonToJSON' opt@(Options { plainEnums = False }) (DisjointUnjsonDef k l) a =
   Aeson.object ((k,Aeson.toJSON nm) : objectDefToArray (nulls opt) (unjsonToJSON' opt) a f)
   where
     [(nm,_,f)] = filter (\(_,is,_) -> is a) l
+unjsonToJSON' (Options { plainEnums = True }) (DisjointUnjsonDef _k l) a =
+  Aeson.toJSON nm
+  where
+    Just (nm,_,_) = find (\(_,is,_) -> is a) l
 unjsonToJSON' opt (UnionUnjsonDef l) a =
   Aeson.object (objectDefToArray (nulls opt) (unjsonToJSON' opt) a f)
   where
