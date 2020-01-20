@@ -1,4 +1,4 @@
-
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE CPP #-}
 #if __GLASGOW_HASKELL__ < 710
 {-# LANGUAGE OverlappingInstances #-}
@@ -102,7 +102,8 @@ module Data.Unjson
 -- * Data definitions
 , Unjson(..)
 , UnjsonDef(..)
-
+, pattern DisjointUnjsonDef
+, pattern EnumUnjsonDef
 -- ** Objects
 , objectOf
 , field
@@ -125,6 +126,8 @@ module Data.Unjson
 , mapOf
 , enumOf
 , enumUnjsonDef
+, stringEnumOf
+, stringEnumUnjsonDef
 , disjointUnionOf
 , unionOf
 -- ** Helpers
@@ -597,9 +600,16 @@ data UnjsonDef a where
   ArrayUnjsonDef    :: Typeable k => Maybe (PrimaryKeyExtraction k) -> ArrayMode -> ([k] -> Result v) -> (v -> [k]) -> UnjsonDef k -> UnjsonDef v
   ObjectUnjsonDef   :: Ap (FieldDef k) (Result k) -> UnjsonDef k
   TupleUnjsonDef    :: Ap (TupleFieldDef k) (Result k) -> UnjsonDef k
-  DisjointUnjsonDef :: Text.Text -> [(Text.Text, k -> Bool, Ap (FieldDef k) (Result k))] -> UnjsonDef k
+  TaggedUnionUnjsonDef :: Maybe Text.Text -> [(Text.Text, k -> Bool, Ap (FieldDef k) (Result k))] -> UnjsonDef k
   UnionUnjsonDef    :: [(k -> Bool, Ap (FieldDef k) (Result k))] -> UnjsonDef k
   MapUnjsonDef      :: Typeable k => UnjsonDef k -> (HashMap.HashMap Text.Text k -> Result v) -> (v -> HashMap.HashMap Text.Text k) -> UnjsonDef v
+
+{-# COMPLETE EnumUnjsonDef, DisjointUnjsonDef #-}
+pattern EnumUnjsonDef :: [(Text.Text, k -> Bool, Ap (FieldDef k) (Result k))] -> UnjsonDef k
+pattern EnumUnjsonDef l = TaggedUnionUnjsonDef Nothing l
+
+pattern DisjointUnjsonDef :: Text.Text -> [(Text.Text, k -> Bool, Ap (FieldDef k) (Result k))] -> UnjsonDef k
+pattern DisjointUnjsonDef k l = TaggedUnionUnjsonDef (Just k) l
 
 instance Invariant UnjsonDef where
   invmap f g (SimpleUnjsonDef name p s) = SimpleUnjsonDef name (fmap f . p) (s . g)
@@ -607,7 +617,7 @@ instance Invariant UnjsonDef where
   invmap f g (MapUnjsonDef d n k) = MapUnjsonDef d (fmap f . n) (k . g)
   invmap f g (ObjectUnjsonDef fd) = ObjectUnjsonDef (fmap (fmap f) (hoistAp (contramapFieldDef g) fd))
   invmap f g (TupleUnjsonDef td) = TupleUnjsonDef (fmap (fmap f) (hoistAp (contramapTupleFieldDef g) td))
-  invmap f g (DisjointUnjsonDef d l) = DisjointUnjsonDef d (map (\(a,b,c) -> (a,b . g,fmap (fmap f) (hoistAp (contramapFieldDef g) c))) l)
+  invmap f g (TaggedUnionUnjsonDef d l) = TaggedUnionUnjsonDef d (map (\(a,b,c) -> (a,b . g,fmap (fmap f) (hoistAp (contramapFieldDef g) c))) l)
   invmap f g (UnionUnjsonDef l) = UnionUnjsonDef (map (\(b,c) -> (b . g,fmap (fmap f) (hoistAp (contramapFieldDef g) c))) l)
 
 unjsonInvmapR :: (a -> Result b) -> (b -> a) -> UnjsonDef a -> UnjsonDef b
@@ -616,7 +626,7 @@ unjsonInvmapR f g (ArrayUnjsonDef mpk am n k d) = ArrayUnjsonDef mpk am (join . 
 unjsonInvmapR f g (MapUnjsonDef d n k) = MapUnjsonDef d (join . fmap f . n) (k . g)
 unjsonInvmapR f g (ObjectUnjsonDef fd) = ObjectUnjsonDef (fmap (join . fmap f) (hoistAp (contramapFieldDef g) fd))
 unjsonInvmapR f g (TupleUnjsonDef td) = TupleUnjsonDef (fmap (join . fmap f) (hoistAp (contramapTupleFieldDef g) td))
-unjsonInvmapR f g (DisjointUnjsonDef d l) = DisjointUnjsonDef d (map (\(a,b,c) -> (a,b . g,fmap (join . fmap f) (hoistAp (contramapFieldDef g) c))) l)
+unjsonInvmapR f g (TaggedUnionUnjsonDef d l) = TaggedUnionUnjsonDef d (map (\(a,b,c) -> (a,b . g,fmap (join . fmap f) (hoistAp (contramapFieldDef g) c))) l)
 unjsonInvmapR f g (UnionUnjsonDef l) = UnionUnjsonDef (map (\(b,c) -> (b . g,fmap (join . fmap f) (hoistAp (contramapFieldDef g) c))) l)
 
 -- Note: contramapFieldDef and contramapTupleFieldDef are basically
@@ -706,6 +716,9 @@ unjsonToJSON' opt (DisjointUnjsonDef k l) a =
   Aeson.object ((k,Aeson.toJSON nm) : objectDefToArray (nulls opt) (unjsonToJSON' opt) a f)
   where
     [(nm,_,f)] = filter (\(_,is,_) -> is a) l
+unjsonToJSON' _opt (EnumUnjsonDef l) a = Aeson.toJSON nm
+  where
+    [(nm, _, _)] = filter (\(_,is,_) -> is a) l
 unjsonToJSON' opt (UnionUnjsonDef l) a =
   Aeson.object (objectDefToArray (nulls opt) (unjsonToJSON' opt) a f)
   where
@@ -791,6 +804,10 @@ unjsonToByteStringBuilder'' level opt (DisjointUnjsonDef k l) a =
     serx (key,val) = Builder.lazyByteString (Aeson.encode (Aeson.toJSON key)) <> Builder.char8 ':'
                      <> (if pretty opt then Builder.char8 ' ' else mempty)  <> val
     [(nm,_,f)] = filter (\(_,is,_) -> is a) l
+unjsonToByteStringBuilder'' _level _opt (EnumUnjsonDef l) a =
+  Builder.lazyByteString (Aeson.encode nm)
+  where
+    [(nm, _, _)] = filter (\(_,is,_) -> is a) l
 unjsonToByteStringBuilder'' level opt (UnionUnjsonDef l) a =
   unjsonGroup level opt (Builder.char8 '{') (Builder.char8 '}') serx obj
   where
@@ -903,6 +920,14 @@ parseUpdating (DisjointUnjsonDef k l) ov v
           Nothing -> resultPrependKey k $ fail "missing key"
       Left e ->
         fail e
+parseUpdating (EnumUnjsonDef l) ov v
+  = case Aeson.parseEither Aeson.parseJSON v of
+      Right (t :: Text.Text) ->
+        case find (\(nm,_,_) -> nm == t) l of
+          Just (_,_,f) -> join (runAp (lookupByFieldDef mempty ov) f)
+          Nothing ->
+            fail $ "value '" ++ Text.unpack t ++ "' is not one of the allowed for enumeration [" ++ intercalate "," (map (\(a,_,_) -> Text.unpack a) l) ++ "]"
+      Left e -> fail e
 parseUpdating (UnionUnjsonDef l) ov v
   = case Aeson.parseEither Aeson.parseJSON v of
       Right v' -> case filter (\(_,f) -> isJust (mapM_ (\k -> HashMap.lookup k v') (listRequiredKeys f))) l of
@@ -1257,6 +1282,11 @@ enumOf :: (Eq k) => Text.Text -> [(Text.Text, k)] -> UnjsonDef k
 enumOf key alternates =
   DisjointUnjsonDef key (map (\(a,b) -> (a,(==)b,fmap return (pure b))) alternates)
 
+-- | Provide string encoding of parameterless sum types.
+stringEnumOf :: (Eq k) => [(Text.Text, k)] -> UnjsonDef k
+stringEnumOf alternates =
+  EnumUnjsonDef (map (\(a,b) -> (a,(==)b,fmap return (pure b))) alternates)
+
 -- | Automatic sum type conversion with parameterless constructors.
 --
 -- Basically an automatic version of 'enumOf'.
@@ -1273,6 +1303,16 @@ enumUnjsonDef
 enumUnjsonDef = enumOf typeName [ (Text.pack $ show $ toConstr c, c) | c <- constructors ]
   where
     typeName = Text.pack . show . typeRep $ (Proxy :: Proxy a)
+    constructors = enumFromTo minBound maxBound :: [a]
+
+-- | Automatic sum type string encoding with parameterless constructors
+--
+--   Basically an automatic version of 'stringEnumOf'.
+stringEnumUnjsonDef
+  :: forall a. (Eq a, Enum a, Bounded a, Data a)
+  => UnjsonDef a
+stringEnumUnjsonDef = stringEnumOf [ (Text.pack $ show $ toConstr c, c) | c <- constructors ]
+  where
     constructors = enumFromTo minBound maxBound :: [a]
 
 -- | Declare array of values where each of them is described by
@@ -1439,7 +1479,7 @@ unjsonIsConstrByName nm v = nm == show (toConstr v)
 -- >     Text
 -- > port (def):
 -- >     Port to listen on, defaults to 80
--- >     Int
+-- >     Integer
 -- > credentials (req):
 -- >     User admin credentials
 -- >     username (req):
@@ -1473,6 +1513,15 @@ unjsonIsConstrByName nm v = nm == show (toConstr v)
 -- >         domain (opt):
 -- >             Domain for user credentials
 -- >             Text
+-- > int32 (req):
+-- >     A bounded integer fieldd.
+-- >     Int32
+-- > mode (req):
+-- >     Mode in which to operate
+-- >     string enumeration:
+-- >     - Production
+-- >     - Testing
+-- >     - Staging
 render :: UnjsonDef a -> String
 render = P.render . renderDoc
 
@@ -1495,6 +1544,8 @@ renderDoc (TupleUnjsonDef f) = P.text (ansiDimmed ++ "tuple of size " ++ show (c
              P.vcat (renderTupleFields f)
 renderDoc (DisjointUnjsonDef k z) = P.text (ansiDimmed ++ "disjoint union based on key:" ++ ansiReset) P.$+$
   P.vcat [P.text (ansiBold ++ Text.unpack k ++ ": " ++ Text.unpack l ++ ansiReset) P.$+$ P.nest 4 (P.vcat (renderFields f)) | (l,_,f) <- z]
+renderDoc (EnumUnjsonDef z) = P.text (ansiDimmed ++ "string enumeration:" ++ ansiReset) P.$+$
+  P.vcat [P.text (ansiBold ++ "- " ++ Text.unpack l ++ ansiReset) | (l,_, _) <- z]
 renderDoc (UnionUnjsonDef z) = P.text (ansiDimmed ++ "plain union based on presence of required keys:" ++ ansiReset) P.$+$
   P.vcat [P.text (ansiBold ++ "case " ++ show (i::Int) ++ ":" ++ ansiReset) P.$+$ P.nest 4 (P.vcat (renderFields f)) | ((_,f),i) <- zip z [1..]]
 

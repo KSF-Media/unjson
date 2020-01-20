@@ -40,6 +40,7 @@ data Konfig =
             , konfigOptions     :: [Text.Text]
             , konfigAlternates  :: Maybe (Text.Text,Credentials)
             , konfigInt32       :: Int32
+            , konfigMode        :: Mode
             }
   deriving (Eq,Ord,Show,Typeable)
 
@@ -49,6 +50,9 @@ data Credentials =
                  , credentialsDomain   :: Maybe Text.Text
                  }
   deriving (Eq,Ord,Show,Typeable)
+
+data Mode = Production | Testing | Staging
+  deriving (Show, Eq, Ord, Enum, Typeable, Data, Bounded)
 
 
 unjsonKonfig :: UnjsonDef Konfig
@@ -75,6 +79,9 @@ unjsonKonfig = objectOf $ pure Konfig
            <*> field "int32"
                  konfigInt32
                  "A bounded integer fieldd."
+           <*> field "mode"
+                 konfigMode
+                 "Mode in which to operate"
 
 unjsonCredentials :: UnjsonDef Credentials
 unjsonCredentials = objectOf $ pure Credentials
@@ -93,6 +100,12 @@ unjsonCredentials = objectOf $ pure Credentials
 instance Unjson Credentials where
   unjsonDef = unjsonCredentials
 
+unjsonMode :: UnjsonDef Mode
+unjsonMode = stringEnumUnjsonDef
+
+instance Unjson Mode where
+  unjsonDef = unjsonMode
+
 test_proper_parse :: Test
 test_proper_parse = "Proper parsing of a complex structure" ~: do
   let json = Aeson.object
@@ -103,6 +116,7 @@ test_proper_parse = "Proper parsing of a complex structure" ~: do
                    , "password" .= "pass1"
                    ]
                , "int32" .= 42
+               , "mode" .= "Production"
                ]
   let expect = Konfig
                { konfigHostname = "www.example.com"
@@ -112,6 +126,7 @@ test_proper_parse = "Proper parsing of a complex structure" ~: do
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32 = 42
+               , konfigMode = Production
                }
 
   let Result val iss = parse unjsonKonfig json
@@ -146,6 +161,7 @@ test_missing_key = "Key missing" ~: do
                                 [ "username" .= "usr1"
                                 ]
               , "int32" .= 999
+              , "mode" .= "Staging"
               ]
   let json = Aeson.object
                [ "payload" .= json1
@@ -177,6 +193,7 @@ test_wrong_value_type = "Value at key is wrong type" ~: do
                    ]
                , "credentials" .= "www.example.com"
                , "int32" .= 999
+               , "mode" .= "Staging"
                ]
 
   let Result _val iss = parse unjsonKonfig json
@@ -232,6 +249,7 @@ test_symmetry_of_serialization = "Key missing" ~: do
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32 = 42
+               , konfigMode = Staging
                }
 
   let json = unjsonToJSON unjsonKonfig expect
@@ -250,6 +268,7 @@ test_pretty_serialization = "Pretty serialization" ~: do
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32 = 42
+               , konfigMode = Staging
                }
 
   let jsonstr = BSL.unpack $ unjsonToByteStringLazy' (Options { nulls = False, indent = 4, pretty = True }) unjsonKonfig konfig
@@ -263,7 +282,8 @@ test_pretty_serialization = "Pretty serialization" ~: do
         , "    },"
         , "    \"comment\": \"nice server\","
         , "    \"options\": [],"
-        , "    \"int32\": 42"
+        , "    \"int32\": 42,"
+        , "    \"mode\": \"Staging\""
         , "}"
         ]
   assertEqual "Serialize pretty prints proper indents" expect jsonstr
@@ -278,7 +298,8 @@ test_pretty_serialization = "Pretty serialization" ~: do
         , "     },"
         , "     \"comment\": \"nice server\","
         , "     \"options\": [],"
-        , "     \"int32\": 42"
+        , "     \"int32\": 42,"
+        , "     \"mode\": \"Staging\""        
         , "}"
         ]
   assertEqual "Serialize pretty prints proper indents" expect5 jsonstr5
@@ -293,7 +314,8 @@ test_pretty_serialization = "Pretty serialization" ~: do
         , "},"
         , "\"comment\":\"nice server\","
         , "\"options\":[],"
-        , "\"int32\":42"
+        , "\"int32\":42,"
+        , "\"mode\":\"Staging\""                
         , "}"
         ]
   assertEqual "Serialize pretty prints proper indents" expect3 jsonstr3
@@ -309,6 +331,7 @@ test_serialize_with_nulls = "Serialize with nulls" ~: do
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32 = 42
+               , konfigMode = Production
                }
 
   let jsonstr = BSL.unpack $ unjsonToByteStringLazy' (Options { nulls = True, indent = 4, pretty = True }) unjsonKonfig konfig
@@ -324,7 +347,8 @@ test_serialize_with_nulls = "Serialize with nulls" ~: do
         , "    \"comment\": \"nice server\","
         , "    \"options\": [],"
         , "    \"alternates\": null,"
-        , "    \"int32\": 42"
+        , "    \"int32\": 42,"
+        , "    \"mode\": \"Production\""
         , "}"
         ]
   assertEqual "Serialize pretty prints proper indents" expect jsonstr
@@ -467,7 +491,46 @@ test_auto_enum_field = "test_auto_enum_field" ~: do
                  ]
     let Result _val iss = parse unjsonAutoEnumAB json
     assertEqual "No problems" [Anchored (Path [PathElemKey "AutoAB"]) "value 'wrong' is not one of the allowed for enumeration [AutoA,AutoB]"] iss
-    
+
+test_string_enum_field :: Test
+test_string_enum_field = "test_string_enum_field" ~: do
+  do
+    let json = Aeson.object [ "field" .= "A" ]
+    let Result val iss = parse unjsonFieldAB json
+    assertEqual "No problems" [] iss
+    assertEqual "Proper value present" A val
+  do
+    let json = Aeson.object [ "field" .= "B" ]
+    let Result val iss = parse unjsonFieldAB json
+    assertEqual "No problems" [] iss
+    assertEqual "Proper value present" B val
+  do
+    let json = Aeson.object [ "field" .= "wrong" ]
+    let Result _val iss = parse unjsonFieldAB json
+    assertEqual "No problems" [Anchored (Path [PathElemKey "field"]) "value 'wrong' is not one of the allowed for enumeration [A,B]"] iss
+  where
+    unjsonFieldAB =
+      objectOf $ fieldBy "field" id "Just an AB field" (stringEnumOf [("A", A), ("B", B)])
+
+test_auto_string_enum_field :: Test
+test_auto_string_enum_field = "test_auto_string_enum_field" ~: do
+  do
+    let json = Aeson.object [ "field" .= "AutoA" ]
+    let Result val iss = parse unjsonFieldAutoAB json
+    assertEqual "No problems" [] iss
+    assertEqual "Proper value present" AutoA val
+  do
+    let json = Aeson.object [ "field" .= "AutoB" ]
+    let Result val iss = parse unjsonFieldAutoAB json
+    assertEqual "No problems" [] iss
+    assertEqual "Proper value present" AutoB val
+  do
+    let json = Aeson.object [ "field" .= "wrong" ]
+    let Result _val iss = parse unjsonFieldAutoAB json
+    assertEqual "No problems" [Anchored (Path [PathElemKey "field"]) "value 'wrong' is not one of the allowed for enumeration [AutoA,AutoB]"] iss    
+  where
+    unjsonFieldAutoAB =
+      objectOf $ fieldBy "field" id "Just an AutoAB field" (stringEnumUnjsonDef :: UnjsonDef AutoAB)
 
 test_update_from_serialization :: Test
 test_update_from_serialization = "test_update_from_serialization" ~: do
@@ -479,6 +542,7 @@ test_update_from_serialization = "test_update_from_serialization" ~: do
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32   = 42
+               , konfigMode    = Staging
                }
   let expect = Konfig
                { konfigHostname = "www.example.com"
@@ -488,6 +552,7 @@ test_update_from_serialization = "test_update_from_serialization" ~: do
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32   = 256
+               , konfigMode    = Staging
                }
 
   let json = Aeson.object
@@ -498,6 +563,7 @@ test_update_from_serialization = "test_update_from_serialization" ~: do
                                [ "domain" .= "domain"
                                , "username" .= "usr2" ]
                , "int32" .= 256
+               , "mode"  .= "Staging"
                ]
   let Result val iss = update initial unjsonKonfig json
   assertEqual "No problems" [] iss
@@ -514,6 +580,7 @@ test_update_from_serialization_with_reset_to_default = "test_update_from_seriali
                , konfigAlternates = Nothing
                , konfigOptions = []
                , konfigInt32 = 0
+               , konfigMode = Staging
                }
   let _expect = Konfig
                { konfigHostname = "www.example.com"
@@ -524,6 +591,7 @@ test_update_from_serialization_with_reset_to_default = "test_update_from_seriali
                                          , Credentials "usrx" "passx" Nothing)
                , konfigOptions = []
                , konfigInt32 = 256
+               , konfigMode = Staging
                }
 
   let json = Aeson.object
@@ -538,6 +606,7 @@ test_update_from_serialization_with_reset_to_default = "test_update_from_seriali
                                    , "password" .= "passx"
                                    ]
                                  ]
+               , "mode" .= "Staging"
                ]
   let Result _ iss = update initial unjsonKonfig json
   assertEqual "Cannot reset mandatory field without default"
@@ -801,6 +870,9 @@ tests = test [ test_proper_parse
              , test_serialize_with_nulls
              , test_parse_either_field
              , test_enum_field
+             , test_auto_enum_field
+             , test_string_enum_field
+             , test_auto_string_enum_field             
              , test_update_from_serialization
              , test_update_from_serialization_with_reset_to_default
              , test_array_modes
