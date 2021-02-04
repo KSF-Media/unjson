@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 module Main where
 
+import Prelude hiding (fail)
 import qualified Data.Text as Text
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import Data.Int
@@ -9,24 +10,16 @@ import Data.Typeable
 import Data.Unjson
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.=))
-import Test.HUnit
 import Data.List
 import Data.Data
 import Data.Functor.Invariant
+import Control.Monad.Fail (MonadFail(fail))
+import Test.HUnit
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashMap.Lazy as LazyHashMap
 import qualified Data.Map as Map
 
 import System.Exit (ExitCode (..), exitWith)
-
-#if !MIN_VERSION_base(4,6,0)
-import Prelude hiding (catch)
-#endif
-
-#if !MIN_VERSION_base(4,8,0)
-import Control.Applicative
-import Data.Monoid
-#endif
 
 default (Text.Text, String, Int, Double)
 
@@ -199,11 +192,11 @@ test_wrong_value_type = "Value at key is wrong type" ~: do
   let Result _val iss = parse unjsonKonfig json
   assertEqual "Number of issues in parsing" 3 (length iss)
   assertEqual "Hostname must be string error info is present"
-                (Anchored (Path [ PathElemKey "hostname"
-                                ]) "parsing Text failed, expected String, but encountered Number") (iss!!0)
+    (Anchored (Path [PathElemKey "hostname"])
+    "parsing Text failed, expected String, but encountered Number") (iss!!0)
   assertEqual "Port must be number error info is present"
-                (Anchored (Path [ PathElemKey "port"
-                                ]) "parsing Integer failed, expected Number, but encountered Object") (iss!!1)
+    (Anchored (Path [ PathElemKey "port" ])
+    "parsing Integer failed, expected Number, but encountered Object") (iss!!1)
   assertEqual "Credentials must be object error info is present"
                 (Anchored (Path [ PathElemKey "credentials"
                                 ]) "Error in $: parsing HashMap ~Text failed, expected Object, but encountered String") (iss!!2)
@@ -229,13 +222,17 @@ test_tuple_parsing = "Tuple parsing" ~: do
 
   let Result (_ :: (Integer, Integer, Text.Text)) iss'' = parse unjsonDef json
   assertEqual "Issues in parsing"
-                [ Anchored (Path [PathElemIndex 0]) "parsing Integer failed, expected Number, but encountered String"
-                , Anchored (Path [PathElemIndex 1]) "parsing Integer failed, expected Number, but encountered String"
-                , Anchored (Path [PathElemIndex 2]) "parsing Text failed, expected String, but encountered Number"
-                ] iss''
+    [ Anchored (Path [PathElemIndex 0])
+        "parsing Integer failed, expected Number, but encountered String"
+    , Anchored (Path [PathElemIndex 1])
+        "parsing Integer failed, expected Number, but encountered String"
+    , Anchored (Path [PathElemIndex 2])
+        "parsing Text failed, expected String, but encountered Number"
+    ] iss''
 
   let Result (_ :: (String, Text.Text)) iss''' = parse unjsonDef json
-  assertEqual "Array too long for 2-tuple" [Anchored mempty "cannot parse array of length 3 into tuple of size 2"] iss'''
+  assertEqual "Array too long for 2-tuple" [Anchored mempty
+    "cannot parse array of length 3 into tuple of size 2"] iss'''
 
   return ()
 
@@ -367,7 +364,8 @@ test_semantic_errors_on_values = "test_semantic_errors_on_values" ~: do
                  [ "value" .= (13 :: Int)
                  ]
     let Result _val iss = parse unjsonButThirteen json
-    assertEqual "Problem is reported" [Anchored (Path [PathElemKey "value"]) "13 is a bad luck number"] iss
+    assertEqual "Problem is reported" [Anchored (Path [PathElemKey "value"])
+      "13 is a bad luck number"] iss
     -- assertEqual "Just numerical_value present" (13) val
 
 unjsonEitherIntText :: UnjsonDef (Either Int Text.Text)
@@ -410,7 +408,8 @@ test_parse_either_field = "test_parse_either_field" ~: do
                  , "numerical_value" .= 12345
                  ]
     let Result _val iss = parse unjsonEitherIntText json
-    assertEqual "Problem when mode is missing" [Anchored (Path [PathElemKey "mode"]) "missing key"] iss
+    assertEqual "Problem when mode is missing" [Anchored (Path [PathElemKey "mode"])
+      "missing key"] iss
   do
     let json = Aeson.object
                  [ "mode" .= "something else"
@@ -460,7 +459,8 @@ test_enum_field = "test_enum_field" ~: do
                  [ "mode" .= "wrong"
                  ]
     let Result _val iss = parse unjsonEnumAB json
-    assertEqual "No problems" [Anchored (Path [PathElemKey "mode"]) "value 'wrong' is not one of the allowed for enumeration [A,B]"] iss
+    assertEqual "No problems" [Anchored (Path [PathElemKey "mode"])
+      "value 'wrong' is not one of the allowed for enumeration [A,B]"] iss
 
 
 data AutoAB = AutoA | AutoB
@@ -490,7 +490,8 @@ test_auto_enum_field = "test_auto_enum_field" ~: do
                  [ "AutoAB" .= "wrong"
                  ]
     let Result _val iss = parse unjsonAutoEnumAB json
-    assertEqual "No problems" [Anchored (Path [PathElemKey "AutoAB"]) "value 'wrong' is not one of the allowed for enumeration [AutoA,AutoB]"] iss
+    assertEqual "No problems" [Anchored (Path [PathElemKey "AutoAB"])
+      "value 'wrong' is not one of the allowed for enumeration [AutoA,AutoB]"] iss
 
 test_string_enum_field :: Test
 test_string_enum_field = "test_string_enum_field" ~: do
@@ -610,7 +611,8 @@ test_update_from_serialization_with_reset_to_default = "test_update_from_seriali
                ]
   let Result _ iss = update initial unjsonKonfig json
   assertEqual "Cannot reset mandatory field without default"
-                [Anchored (Path [PathElemKey "hostname"]) "parsing Text failed, expected String, but encountered Null"] iss
+    [Anchored (Path [PathElemKey "hostname"])
+      "parsing Text failed, expected String, but encountered Null"] iss
   return ()
 
 test_array_modes :: Test
@@ -799,7 +801,8 @@ test_plain_unions = "test_maps" ~: do
                ]
 
   let Result _val3 iss3 = parse unjsonPlainUnion json3
-  assertEqual "Cannot parse PlainUnionA" [Anchored (Path [PathElemKey "key1"]) "expected String, but encountered Number"] iss3
+  assertEqual "Cannot parse PlainUnionA"
+    [Anchored (Path [PathElemKey "key1"]) "expected String, but encountered Number"] iss3
 
 
   -- choose PlainUnionB
